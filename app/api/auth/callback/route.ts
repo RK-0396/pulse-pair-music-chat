@@ -5,11 +5,17 @@ const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  let host = url.host;
+  const forwardedHost = request.headers.get('x-forwarded-host');
+  const forwardedProto = request.headers.get('x-forwarded-proto') || 'http';
+  
+  let host = forwardedHost || url.host;
+  let protocol = forwardedHost ? `${forwardedProto}:` : url.protocol;
+
   if (host.includes('0.0.0.0') || host.includes('localhost')) {
     host = host.replace('0.0.0.0', '127.0.0.1').replace('localhost', '127.0.0.1');
   }
-  const origin = `${url.protocol}//${host}`;
+  
+  const origin = `${protocol}//${host}`;
   const REDIRECT_URI = `${origin}/api/auth/callback`;
   
   const { searchParams } = url;
