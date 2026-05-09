@@ -6,6 +6,13 @@ import { Play, Pause, SkipForward, SkipBack, Music2, ListMusic, Search, MessageC
 import { motion, AnimatePresence } from "framer-motion";
 import { AudioVisualizer } from "./AudioVisualizer";
 
+declare global {
+  interface Window {
+    onSpotifyWebPlaybackSDKReady: () => void;
+    Spotify: any;
+  }
+}
+
 const PLAYLIST = [
   { id: "0", title: "Teri Ye Adaa", artist: "JK - Special Track", url: "/audio/teri-ye-adaa-romantic.mp3", color: "#f43f5e" },
   { id: "1", title: "Emotional Love Song", artist: "Hindi", url: "/audio/emotional-hindi-love-song.mp3", color: "#a855f7" },

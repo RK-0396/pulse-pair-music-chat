@@ -92,9 +92,9 @@ export default function Home() {
               <div className="relative flex items-center justify-center w-full h-20 sm:h-24 max-w-md">
                 {/* Connecting Line */}
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-0.5 bg-gradient-to-r from-transparent via-indigo-500/20 to-transparent" />
-                
+
                 {/* User 1 Avatar */}
-                <motion.div 
+                <motion.div
                   animate={{ y: [-3, 3, -3] }}
                   transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
                   className="absolute left-16 sm:left-20 w-12 h-12 sm:w-16 sm:h-16 rounded-xl border border-white/10 p-1 bg-white/5 backdrop-blur-xl flex items-center justify-center shadow-2xl"
@@ -104,7 +104,7 @@ export default function Home() {
                 </motion.div>
 
                 {/* User 2 Avatar */}
-                <motion.div 
+                <motion.div
                   animate={{ y: [3, -3, 3] }}
                   transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", delay: 1 }}
                   className="absolute right-16 sm:right-20 w-12 h-12 sm:w-16 sm:h-16 rounded-xl border border-white/10 p-1 bg-white/5 backdrop-blur-xl flex items-center justify-center shadow-2xl"
@@ -113,13 +113,21 @@ export default function Home() {
                   <div className="absolute -left-1 -bottom-1 w-3 h-3 bg-pink-500 rounded-full border-2 border-black" />
                 </motion.div>
 
-                {/* Center pulse */}
+                {/* Center connection heart */}
                 <motion.div 
-                  animate={{ scale: [1, 1.2, 1], opacity: [0.8, 1, 0.8] }}
+                  animate={{ 
+                    scale: [1, 1.3, 1],
+                    filter: ["drop-shadow(0 0 8px rgba(236,72,153,0.4))", "drop-shadow(0 0 20px rgba(236,72,153,0.7))", "drop-shadow(0 0 8px rgba(236,72,153,0.4))"]
+                  }}
                   transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                  className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-pink-500/10 border border-pink-500/20 flex items-center justify-center relative z-10 backdrop-blur-sm"
+                  className="w-12 h-12 flex items-center justify-center relative z-10"
                 >
-                  <Heart className="w-5 h-5 text-pink-500 fill-pink-500" />
+                  <span className="text-3xl filter drop-shadow-lg">💖</span>
+                  <motion.div 
+                    animate={{ scale: [1, 1.8], opacity: [0.4, 0] }}
+                    transition={{ duration: 2, repeat: Infinity, ease: "easeOut" }}
+                    className="absolute inset-0 bg-pink-500/10 rounded-full blur-xl"
+                  />
                 </motion.div>
               </div>
 
