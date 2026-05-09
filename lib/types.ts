@@ -11,6 +11,8 @@ export interface RoomState {
   lastUpdated: number; // timestamp
   track?: any;
   playlist?: any[];
+  members?: any[];
+  memberCount?: number;
 }
 
 export interface Room {
