@@ -63,19 +63,30 @@ app.prepare().then(() => {
           ? state.position + (Date.now() - state.lastUpdateAt) / 1000 
           : state.position;
           
+        const membersCount = roomMembers.get(roomId)?.size || 0;
         socket.emit(SocketEvent.ROOM_STATE_UPDATE, {
-          playing: state.playing,
-          audioUrl: state.audioUrl,
-          position: currentPos
+          playing: state.playing || false,
+          audioUrl: state.audioUrl || null,
+          position: currentPos || 0,
+          track: state.track || null,
+          playlist: state.playlist || [],
+          memberCount: membersCount
         });
       }
 
-      io.to(roomId).emit(SocketEvent.USER_JOINED, { userId: socket.id });
+      const members = Array.from(roomMembers.get(roomId) || []);
+      io.to(roomId).emit(SocketEvent.USER_JOINED, { 
+        userId: socket.id,
+        memberCount: members.length
+      });
     });
 
-    socket.on(SocketEvent.PLAY, ({ roomId, audioUrl, position }) => {
-      roomState.set(roomId, { playing: true, audioUrl, position, lastUpdateAt: Date.now() });
-      socket.to(roomId).emit(SocketEvent.PLAY, { audioUrl, position });
+    socket.on(SocketEvent.PLAY, ({ roomId, audioUrl, position, track, playlist }) => {
+      const state = roomState.get(roomId) || {};
+      const newTrack = track !== undefined ? track : state.track;
+      const newPlaylist = playlist !== undefined ? playlist : state.playlist;
+      roomState.set(roomId, { playing: true, audioUrl, position, lastUpdateAt: Date.now(), track: newTrack, playlist: newPlaylist });
+      socket.to(roomId).emit(SocketEvent.PLAY, { audioUrl, position, track: newTrack, playlist: newPlaylist });
       console.log(`▶  Room ${roomId} playing at ${position}s`);
     });
 
@@ -112,8 +123,12 @@ app.prepare().then(() => {
       for (const roomId of socket.rooms) {
         if (roomId === socket.id) continue;
         roomMembers.get(roomId)?.delete(socket.id);
-        io.to(roomId).emit(SocketEvent.PAUSE, { reason: "MEMBER_DISCONNECTED" });
-        console.log(`👋 ${socket.id} left room ${roomId} — pausing`);
+        const members = Array.from(roomMembers.get(roomId) || []);
+        io.to(roomId).emit(SocketEvent.USER_LEFT, { 
+          userId: socket.id,
+          memberCount: members.length
+        });
+        console.log(`👋 ${socket.id} left room ${roomId} — members: ${members.length}`);
       }
     });
 

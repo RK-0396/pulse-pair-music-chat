@@ -1,59 +1,69 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { io, Socket } from "socket.io-client";
 import { useRoomStore } from "@/store/useRoomStore";
 import { SocketEvent } from "@/lib/types";
 
 export const useSocket = (roomId: string | null) => {
-  const socketRef = useRef<Socket | null>(null);
-  // Expose socket via state so consumers re-render when it's ready
+  const { setRoomId, syncState } = useRoomStore();
   const [socket, setSocket] = useState<Socket | null>(null);
-  const { setPlaying, setPosition, setAudioUrl } = useRoomStore();
 
   useEffect(() => {
-    if (!roomId) return;
+    if (!roomId) {
+      setSocket(null);
+      return;
+    }
 
     const s = io({
       transports: ["websocket", "polling"],
     });
 
-    socketRef.current = s;
-    setSocket(s);
-
     s.on("connect", () => {
       console.log("✅ Socket connected:", s.id);
       s.emit(SocketEvent.JOIN_ROOM, roomId);
-    });
-
-    s.on(SocketEvent.PLAY, ({ audioUrl, position }) => {
-      setAudioUrl(audioUrl);
-      setPosition(position);
-      setPlaying(true);
-    });
-
-    s.on(SocketEvent.PAUSE, () => {
-      setPlaying(false);
-    });
-
-    s.on(SocketEvent.SYNC_TICK, ({ position }) => {
-      setPosition(position);
+      setRoomId(roomId);
+      setSocket(s);
     });
 
     s.on(SocketEvent.ROOM_STATE_UPDATE, (state) => {
-      setAudioUrl(state.audioUrl);
-      setPosition(state.position);
-      setPlaying(state.playing);
+      syncState(state);
+      if (state.memberCount !== undefined) {
+        syncState({ members: new Array(state.memberCount).fill("") });
+      }
     });
 
-    s.on("connect_error", (err) => {
-      console.error("❌ Socket connection error:", err.message);
+    s.on(SocketEvent.PLAY, ({ audioUrl, position, track, playlist }) => {
+      syncState({ audioUrl, position, playing: true, track, playlist });
+    });
+
+    s.on(SocketEvent.PAUSE, () => {
+      syncState({ playing: false });
+    });
+
+    s.on(SocketEvent.SYNC_TICK, ({ position }) => {
+      syncState({ position });
+    });
+
+    s.on(SocketEvent.USER_JOINED, ({ userId, memberCount }) => {
+      console.log("User joined:", userId);
+      if (memberCount !== undefined) {
+        // We'll use syncState to update the member count if we add it to the store,
+        // but for now let's just log it or we can add it to the store if needed.
+        useRoomStore.getState().syncState({ members: new Array(memberCount).fill("") });
+      }
+    });
+
+    s.on(SocketEvent.USER_LEFT, ({ userId, memberCount }) => {
+      console.log("User left:", userId);
+      if (memberCount !== undefined) {
+        useRoomStore.getState().syncState({ members: new Array(memberCount).fill("") });
+      }
     });
 
     return () => {
       s.disconnect();
       setSocket(null);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId]);
+  }, [roomId, setRoomId, syncState]);
 
   return socket;
 };

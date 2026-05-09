@@ -9,6 +9,8 @@ export interface RoomState {
   audioUrl: string | null;
   position: number; // in seconds
   lastUpdated: number; // timestamp
+  track?: any;
+  playlist?: any[];
 }
 
 export interface Room {
@@ -34,6 +36,8 @@ export enum SocketEvent {
 export interface PlayEvent {
   audioUrl: string;
   position: number;
+  track?: any;
+  playlist?: any[];
 }
 
 export interface SyncTickEvent {

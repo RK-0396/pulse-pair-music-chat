@@ -7,12 +7,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { AudioVisualizer } from "./AudioVisualizer";
 
 const PLAYLIST = [
-  { id: "0", title: "Majboor-Jk", artist: "JK - Special Track", url: "/audio/majboor-j-2026-05-01.mp4", color: "#f43f5e" },
+  { id: "0", title: "Teri Ye Adaa", artist: "JK - Special Track", url: "/audio/teri-ye-adaa-romantic.mp3", color: "#f43f5e" },
   { id: "1", title: "Emotional Love Song", artist: "Hindi", url: "/audio/emotional-hindi-love-song.mp3", color: "#a855f7" },
   { id: "2", title: "At Every Turn There's You", artist: "MT Soundscapes", url: "/audio/mtsoundscapes-at-every-turn-theres-you.mp3", color: "#ec4899" },
   { id: "3", title: "Dilse Judaai", artist: "MT Soundscapes", url: "/audio/mtsoundscapes-dilse-judaai-song.mp3", color: "#f59e0b" },
   { id: "4", title: "Midnight Echo", artist: "PulsePair Original", url: "/audio/music.m4a", color: "#06b6d4" },
-  { id: "5", title: "Pal Yahi Romantic Ballad", artist: "Hindi", url: "/audio/pal-yahi-romantic-hindi-love-ballad.mp3", color: "#10b981" },
+  { id: "5", title: "Pal Yahi", artist: "Hindi", url: "/audio/pal-yahi-romantic-hindi-love-ballad.mp3", color: "#10b981" },
   { id: "6", title: "Phir Se Mile Hum", artist: "Indian Love Song", url: "/audio/phir-se-mile-hum-indian-love-song.mp3", color: "#ef4444" },
   { id: "7", title: "Dil Ki Aag", artist: "Predicson Music", url: "/audio/predicson_music-dil-ki-aag.mp3", color: "#f97316" },
   { id: "8", title: "Teri Dastan", artist: "Predicson Music", url: "/audio/predicson_music-teri-dastan.mp3", color: "#8b5cf6" },
@@ -23,22 +23,32 @@ const PLAYLIST = [
 interface Props { socket: any; roomId: string; }
 
 export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
-  const { isPlaying, audioUrl, position, setPlaying, setPosition, setAudioUrl } = useRoomStore();
+  const { isPlaying, audioUrl, position, track: globalTrack, playlist: globalPlaylist, members, setPlaying, setPosition, setAudioUrl, syncState } = useRoomStore();
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceCreated = useRef(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  
+
   const [progress, setProgress] = useState(0);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [activeTab, setActiveTab] = useState<'playlist' | 'search' | 'chat' | null>(null);
 
-  // Chat State
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showEmojiPalette, setShowEmojiPalette] = useState(false);
+  const [showToast, setShowToast] = useState(false);
+  const [lastMessage, setLastMessage] = useState<ChatMessage | null>(null);
+
+  const EMOJIS = [
+    "😊", "😂", "🤣", "❤️", "😍", "🥰", "✨", "🔥", "🎵", "🎸", "🎧", "🎹",
+    "👍", "🙌", "👏", "🎉", "🍰", "🎈", "🌟", "⭐", "🌈", "⚡", "🍭", "🍩",
+    "🌹", "🌸", "🌻", "🌴", "🌊", "🌙", "☀️", "☁️", "🍎", "🍕", "🍔", "🍦",
+    "🐶", "🐱", "🐼", "🦊", "🦁", "🐧", "🦄", "🦋", "🎮", "⚽", "🏀", "🚀"
+  ];
 
   // Search State
   const [searchQuery, setSearchQuery] = useState("");
@@ -46,10 +56,7 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
 
-  const activeTrack = 
-    searchResults.find(t => t.url === audioUrl) ?? 
-    PLAYLIST.find(t => t.url === (audioUrl || PLAYLIST[0].url)) ?? 
-    PLAYLIST[0];
+  const activeTrack = globalTrack || (audioUrl ? PLAYLIST.find(t => t.url === audioUrl) : null) || PLAYLIST[0];
 
   const initAudioCtx = useCallback(() => {
     if (!audioRef.current || sourceCreated.current) return;
@@ -86,20 +93,32 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
     if (!socket) return;
     const handleNewMessage = (msg: ChatMessage) => {
       setMessages((prev) => [...prev, msg]);
+      if (activeTab !== 'chat') {
+        setUnreadCount(prev => prev + 1);
+        setLastMessage(msg);
+        setShowToast(true);
+        // Hide toast after 4 seconds
+        setTimeout(() => setShowToast(false), 4000);
+      }
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     };
     socket.on(SocketEvent.CHAT_MESSAGE, handleNewMessage);
     return () => {
       socket.off(SocketEvent.CHAT_MESSAGE, handleNewMessage);
     };
-  }, [socket]);
+  }, [socket, activeTab]);
+
+  // Reset unread count when chat is opened
+  useEffect(() => {
+    if (activeTab === 'chat') setUnreadCount(0);
+  }, [activeTab]);
 
   const handlePlay = () => {
     if (!socket) return;
     initAudioCtx();
     if (audioCtxRef.current?.state === "suspended") audioCtxRef.current.resume();
     const url = audioUrl || PLAYLIST[0].url;
-    socket.emit(SocketEvent.PLAY, { roomId, audioUrl: url, position: audioRef.current?.currentTime || 0 });
+    socket.emit(SocketEvent.PLAY, { roomId, audioUrl: url, position: audioRef.current?.currentTime || 0, track: globalTrack, playlist: globalPlaylist });
     setAudioUrl(url);
     setPlaying(true);
   };
@@ -110,30 +129,36 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
     setPlaying(false);
   };
 
-  const handleSelectTrack = (track: any) => {
+  const handleSelectTrack = (track: any, sourcePlaylist?: any[]) => {
     if (!socket) return;
     initAudioCtx();
-    socket.emit(SocketEvent.PLAY, { roomId, audioUrl: track.url, position: 0 });
+    const finalPlaylist = sourcePlaylist && sourcePlaylist.length > 0 ? sourcePlaylist : PLAYLIST;
+    socket.emit(SocketEvent.PLAY, { roomId, audioUrl: track.url, position: 0, track, playlist: finalPlaylist });
     setAudioUrl(track.url);
     setPosition(0);
     setPlaying(true);
-    // don't close tab immediately to let them select more if they want
+    syncState({ track, playlist: finalPlaylist });
   };
 
   const handleSkipNext = () => {
-    // Basic skip logic for local playlist
-    const idx = PLAYLIST.findIndex(t => t.url === activeTrack.url);
+    const currentPlaylist = globalPlaylist && globalPlaylist.length > 0 ? globalPlaylist : PLAYLIST;
+    const idx = currentPlaylist.findIndex(t => t.url === activeTrack.url);
     if (idx >= 0) {
-      const next = PLAYLIST[(idx + 1) % PLAYLIST.length];
-      handleSelectTrack(next);
+      const next = currentPlaylist[(idx + 1) % currentPlaylist.length];
+      handleSelectTrack(next, currentPlaylist);
+    } else {
+      handleSelectTrack(currentPlaylist[0], currentPlaylist);
     }
   };
 
   const handleSkipPrev = () => {
-    const idx = PLAYLIST.findIndex(t => t.url === activeTrack.url);
+    const currentPlaylist = globalPlaylist && globalPlaylist.length > 0 ? globalPlaylist : PLAYLIST;
+    const idx = currentPlaylist.findIndex(t => t.url === activeTrack.url);
     if (idx >= 0) {
-      const prev = PLAYLIST[(idx - 1 + PLAYLIST.length) % PLAYLIST.length];
-      handleSelectTrack(prev);
+      const prev = currentPlaylist[(idx - 1 + currentPlaylist.length) % currentPlaylist.length];
+      handleSelectTrack(prev, currentPlaylist);
+    } else {
+      handleSelectTrack(currentPlaylist[0], currentPlaylist);
     }
   };
 
@@ -154,7 +179,7 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
 
     if (socket) {
       if (isPlaying) {
-        socket.emit(SocketEvent.PLAY, { roomId, audioUrl: audioUrl || PLAYLIST[0].url, position: t });
+        socket.emit(SocketEvent.PLAY, { roomId, audioUrl: audioUrl || PLAYLIST[0].url, position: t, track: globalTrack, playlist: globalPlaylist });
       } else {
         socket.emit(SocketEvent.SYNC_TICK, { roomId, position: t });
       }
@@ -202,7 +227,7 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
       {/* Glow behind card */}
       <div
         className="absolute inset-0 rounded-3xl blur-2xl opacity-30 -z-10 transition-all duration-700"
-        style={{ background: `radial-gradient(ellipse, ${activeTrack.color}88, transparent 70%)` }}
+        style={{ background: `radial-gradient(ellipse, ${(activeTrack?.color || '#a855f7')}88, transparent 70%)` }}
       />
 
       <motion.div
@@ -221,10 +246,15 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
           </button>
           <button
             onClick={() => setActiveTab(activeTab === 'chat' ? null : 'chat')}
-            className={`p-2 rounded-xl transition-all ${activeTab === 'chat' ? "bg-blue-500/30 text-blue-300" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+            className={`p-2 rounded-xl transition-all relative ${activeTab === 'chat' ? "bg-blue-500/30 text-blue-300" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
             title="Room Chat"
           >
             <MessageCircle className="w-5 h-5" />
+            {unreadCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center animate-bounce shadow-lg">
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
           </button>
           <button
             onClick={() => setActiveTab(activeTab === 'playlist' ? null : 'playlist')}
@@ -240,13 +270,13 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
           {/* Album art */}
           <div
             className="w-20 h-20 rounded-2xl flex items-center justify-center shadow-xl flex-shrink-0 transition-all duration-500 overflow-hidden relative"
-            style={{ background: `linear-gradient(135deg, ${activeTrack.color}cc, ${activeTrack.color}44)` }}
+            style={{ background: `linear-gradient(135deg, ${(activeTrack?.color || '#a855f7')}cc, ${(activeTrack?.color || '#a855f7')}44)` }}
           >
             {activeTrack.albumArt ? (
-              <motion.img 
-                src={activeTrack.albumArt} 
+              <motion.img
+                src={activeTrack.albumArt}
                 className="w-full h-full object-cover"
-                animate={isPlaying ? { scale: 1.05, rotate: 3 } : { scale: 1, rotate: 0 }} 
+                animate={isPlaying ? { scale: 1.05, rotate: 3 } : { scale: 1, rotate: 0 }}
                 transition={{ duration: 4, repeat: Infinity, repeatType: 'reverse', ease: "easeInOut" }}
               />
             ) : (
@@ -256,10 +286,10 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
             )}
           </div>
           <div className="flex-1 min-w-0 pr-4">
-            <motion.h3 key={activeTrack.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="text-white font-extrabold text-2xl truncate tracking-tight">
-              {activeTrack.title}
+            <motion.h3 key={activeTrack?.id || "unknown"} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="text-white font-extrabold text-2xl truncate tracking-tight">
+              {activeTrack?.title || "Unknown Track"}
             </motion.h3>
-            <p className="text-zinc-400 text-base font-medium truncate mt-1">{activeTrack.artist}</p>
+            <p className="text-zinc-400 text-base font-medium truncate mt-1">{activeTrack?.artist || "Unknown Artist"}</p>
           </div>
         </div>
 
@@ -273,11 +303,11 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
           <div className="relative w-full h-2 bg-white/10 rounded-full cursor-pointer group" onClick={handleSeek}>
             <motion.div
               className="absolute top-0 left-0 h-full rounded-full transition-all"
-              style={{ width: `${progress}%`, background: `linear-gradient(90deg, ${activeTrack.color}, #ec4899)` }}
+              style={{ width: `${progress}%`, background: `linear-gradient(90deg, ${activeTrack?.color || '#a855f7'}, #ec4899)` }}
             />
             <div
               className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white shadow-[0_0_10px_rgba(255,255,255,0.5)] opacity-0 group-hover:opacity-100 transition-opacity"
-              style={{ left: `calc(${progress}% - 8px)`, background: activeTrack.color }}
+              style={{ left: `calc(${progress}% - 8px)`, background: activeTrack?.color || '#a855f7' }}
             />
           </div>
           <div className="flex justify-between text-zinc-400 text-xs font-medium tracking-wider mt-2">
@@ -295,7 +325,7 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
             id="play-pause-btn"
             onClick={isPlaying ? handlePause : handlePlay}
             className="w-20 h-20 rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.3)] hover:scale-105 active:scale-95 transition-all"
-            style={{ background: `linear-gradient(135deg, ${activeTrack.color}, #ec4899)` }}
+            style={{ background: `linear-gradient(135deg, ${activeTrack?.color || '#a855f7'}, #ec4899)` }}
           >
             <AnimatePresence mode="wait">
               {isPlaying
@@ -323,7 +353,15 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
                 <h3 className="text-white font-bold text-lg flex items-center gap-2 tracking-wide">
                   {activeTab === 'playlist' && <><ListMusic className="w-5 h-5 text-purple-400" /> Local Playlist</>}
                   {activeTab === 'search' && <><Search className="w-5 h-5 text-pink-400" /> Online Search</>}
-                  {activeTab === 'chat' && <><MessageCircle className="w-5 h-5 text-blue-400" /> Room Chat</>}
+                  {activeTab === 'chat' && (
+                    <div className="flex items-center gap-2">
+                      <MessageCircle className="w-5 h-5 text-blue-400" />
+                      <span>Room Chat</span>
+                      <span className="ml-1 px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-bold border border-blue-500/20">
+                        {members.length} ONLINE
+                      </span>
+                    </div>
+                  )}
                 </h3>
                 <button
                   onClick={() => setActiveTab(null)}
@@ -335,14 +373,14 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
 
               {/* Panel Content */}
               <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 relative">
-                
+
                 {/* PLAYLIST TAB */}
                 {activeTab === 'playlist' && (
                   <div className="space-y-1">
                     {PLAYLIST.map((track, i) => {
                       const active = track.url === activeTrack.url;
                       return (
-                        <TrackItem key={track.id} track={track} active={active} isPlaying={isPlaying} index={i+1} onSelect={() => handleSelectTrack(track)} />
+                        <TrackItem key={track.id} track={track} active={active} isPlaying={isPlaying} index={i + 1} onSelect={() => handleSelectTrack(track, PLAYLIST)} />
                       );
                     })}
                   </div>
@@ -352,20 +390,20 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
                 {activeTab === 'search' && (
                   <div className="flex flex-col h-full">
                     <form onSubmit={searchSpotify} className="relative mb-4 shrink-0 px-1">
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search songs, artists..." 
+                        placeholder="Search songs, artists..."
                         className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-11 pr-4 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-green-500/50 transition-all"
                       />
                       <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-400" />
                       <button type="submit" className="hidden">Search</button>
                     </form>
-                    
+
                     {isSearching && <div className="text-center text-zinc-400 py-8 animate-pulse">Searching catalog...</div>}
                     {searchError && <div className="text-center text-red-400 py-8 text-sm">{searchError}</div>}
-                    
+
                     <div className="space-y-1 overflow-y-auto flex-1">
                       {!isSearching && searchResults.length === 0 && searchQuery && !searchError && (
                         <div className="text-center text-zinc-500 py-8">No previewable tracks found</div>
@@ -373,7 +411,7 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
                       {searchResults.map((track, i) => {
                         const active = track.url === activeTrack.url;
                         return (
-                          <TrackItem key={track.id} track={track} active={active} isPlaying={isPlaying} index={i+1} onSelect={() => handleSelectTrack(track)} isSearch />
+                          <TrackItem key={track.id} track={track} active={active} isPlaying={isPlaying} index={i + 1} onSelect={() => handleSelectTrack(track, searchResults)} isSearch />
                         );
                       })}
                     </div>
@@ -393,10 +431,10 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
                         messages.map((msg) => {
                           const isMe = msg.senderId === socket?.id;
                           return (
-                            <motion.div 
+                            <motion.div
                               initial={{ opacity: 0, y: 10 }}
                               animate={{ opacity: 1, y: 0 }}
-                              key={msg.id} 
+                              key={msg.id}
                               className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
                             >
                               <span className="text-[10px] text-zinc-500 mb-1 px-1">{isMe ? "You" : msg.senderName}</span>
@@ -409,22 +447,58 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
                       )}
                       <div ref={chatEndRef} />
                     </div>
-                    
+
                     <form onSubmit={handleSendMessage} className="shrink-0 mt-2 px-1 relative">
-                      <input
-                        type="text"
-                        value={chatInput}
-                        onChange={(e) => setChatInput(e.target.value)}
-                        placeholder="Say something nice..."
-                        className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
-                      />
-                      <button 
-                        type="submit" 
-                        disabled={!chatInput.trim()}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-blue-400 hover:bg-blue-500/20 rounded-lg transition-all disabled:opacity-50 disabled:hover:bg-transparent"
-                      >
-                        <Send className="w-5 h-5" />
-                      </button>
+                      <AnimatePresence>
+                        {showEmojiPalette && (
+                          <motion.div
+                            initial={{ opacity: 0, y: 10, scale: 0.9 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                            className="absolute bottom-full left-0 mb-2 p-3 bg-[#1a1a24] border border-white/10 rounded-2xl shadow-2xl z-[60] backdrop-blur-2xl w-64 h-48 overflow-y-auto scrollbar-hide"
+                          >
+                            <div className="grid grid-cols-6 gap-2">
+                              {EMOJIS.map(emoji => (
+                                <button
+                                  key={emoji}
+                                  type="button"
+                                  onClick={() => {
+                                    setChatInput(prev => prev + emoji);
+                                    setShowEmojiPalette(false);
+                                  }}
+                                  className="text-2xl hover:scale-125 transition-transform p-1 flex items-center justify-center"
+                                >
+                                  {emoji}
+                                </button>
+                              ))}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setShowEmojiPalette(!showEmojiPalette)}
+                          className={`absolute left-3 top-1/2 -translate-y-1/2 text-xl hover:scale-110 transition-transform ${showEmojiPalette ? 'grayscale-0' : 'grayscale'}`}
+                        >
+                          😊
+                        </button>
+                        <input
+                          type="text"
+                          value={chatInput}
+                          onChange={(e) => setChatInput(e.target.value)}
+                          placeholder="Say something nice..."
+                          className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-11 pr-12 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!chatInput.trim()}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-blue-400 hover:bg-blue-500/20 rounded-lg transition-all disabled:opacity-50 disabled:hover:bg-transparent"
+                        >
+                          <Send className="w-5 h-5" />
+                        </button>
+                      </div>
                     </form>
                   </div>
                 )}
@@ -443,6 +517,35 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
         onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
         onEnded={handleSkipNext}
       />
+
+      {/* Message Toast Notification */}
+      <AnimatePresence>
+        {showToast && lastMessage && activeTab !== 'chat' && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            onClick={() => {
+              setActiveTab('chat');
+              setShowToast(false);
+            }}
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[100] w-[90%] max-w-sm cursor-pointer"
+          >
+            <div className="bg-[#1a1a24]/90 backdrop-blur-2xl border border-white/10 rounded-2xl p-4 shadow-2xl flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center shrink-0">
+                <MessageCircle className="w-5 h-5 text-blue-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">{lastMessage.senderName}</p>
+                <p className="text-sm text-white truncate font-medium">{lastMessage.text}</p>
+              </div>
+              <div className="shrink-0 text-[10px] text-blue-400 font-black animate-pulse bg-blue-500/10 px-2 py-1 rounded-full border border-blue-500/20">
+                NEW
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -465,7 +568,7 @@ function TrackItem({ track, active, isPlaying, index, onSelect, isSearch = false
           {active && isPlaying ? <span className="animate-pulse text-base">♪</span> : index}
         </div>
       )}
-      
+
       <div className="flex-1 min-w-0 pl-1">
         <p className={`text-sm font-semibold truncate ${active ? "text-white" : "text-zinc-300"}`}>{track.title}</p>
         <p className="text-zinc-500 text-xs truncate mt-0.5">{track.artist}</p>
@@ -476,7 +579,7 @@ function TrackItem({ track, active, isPlaying, index, onSelect, isSearch = false
             <div key={j} className="w-1.5 rounded-full"
               style={{
                 height: isPlaying ? undefined : "4px",
-                background: track.color,
+                background: track?.color || "#ff2d55",
                 animation: isPlaying ? `idle-bar 0.6s ease-in-out ${j * 0.15}s infinite alternate` : "none",
                 minHeight: "4px",
                 maxHeight: "16px",
