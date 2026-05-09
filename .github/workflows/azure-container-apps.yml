@@ -1,0 +1,56 @@
+name: Build and Deploy to Azure Container Apps (Free Tier)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/pulsepair:latest
+
+      - name: Log in to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Azure Container Apps
+        run: |
+          # 1. Ensure the Azure CLI Containerapp extension is installed
+          az extension add --name containerapp --upgrade
+
+          # 2. Create the Resource Group
+          az group create --name PulsePair-Free-RG --location eastus
+
+          # 3. Create the Serverless Container App Environment
+          az containerapp env create \
+            --name pulsepair-env \
+            --resource-group PulsePair-Free-RG \
+            --location eastus
+
+          # 4. Deploy the Container App
+          az containerapp create \
+            --name pulsepair-app \
+            --resource-group PulsePair-Free-RG \
+            --environment pulsepair-env \
+            --image docker.io/${{ secrets.DOCKER_USERNAME }}/pulsepair:latest \
+            --target-port 3000 \
+            --ingress 'external' \
+            --query properties.configuration.ingress.fqdn
