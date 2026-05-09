@@ -4,9 +4,10 @@ import { useEffect, useRef } from "react";
 interface Props {
   analyser: AnalyserNode | null;
   isPlaying: boolean;
+  isSpotify?: boolean;
 }
 
-export const AudioVisualizer = ({ analyser, isPlaying }: Props) => {
+export const AudioVisualizer = ({ analyser, isPlaying, isSpotify }: Props) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
 
@@ -39,8 +40,27 @@ export const AudioVisualizer = ({ analyser, isPlaying }: Props) => {
       rafRef.current = requestAnimationFrame(drawIdle);
     };
 
+    const drawSimulated = () => {
+      ctx.clearRect(0, 0, W, H);
+      const t = Date.now() / 200;
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const noise = Math.sin(t + i * 0.2) * 0.3 + Math.sin(t * 0.8 + i * 0.4) * 0.2;
+        const h = Math.max((noise + 0.5) * H * 0.6, H * 0.12);
+        const x = i * (W / BAR_COUNT);
+        const hue = 260 + (noise + 0.5) * 40;
+        const grad = ctx.createLinearGradient(0, H - h, 0, H);
+        grad.addColorStop(0, `hsla(${hue},85%,68%,1)`);
+        grad.addColorStop(1, `hsla(${hue - 40},70%,35%,0.3)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.roundRect(x, H - h, BAR_W, h, 3);
+        ctx.fill();
+      }
+      rafRef.current = requestAnimationFrame(drawSimulated);
+    };
+
     const drawActive = () => {
-      if (!analyser) { drawIdle(); return; }
+      if (!analyser) { drawSimulated(); return; }
       const len = analyser.frequencyBinCount;
       const data = new Uint8Array(len);
       const step = Math.floor(len / BAR_COUNT);
@@ -71,11 +91,15 @@ export const AudioVisualizer = ({ analyser, isPlaying }: Props) => {
     };
 
     cancelAnimationFrame(rafRef.current);
-    if (isPlaying && analyser) drawActive();
-    else drawIdle();
+    if (isPlaying) {
+      if (isSpotify || !analyser) drawSimulated();
+      else drawActive();
+    } else {
+      drawIdle();
+    }
 
     return () => cancelAnimationFrame(rafRef.current);
-  }, [isPlaying, analyser]);
+  }, [isPlaying, analyser, isSpotify]);
 
   return (
     <canvas

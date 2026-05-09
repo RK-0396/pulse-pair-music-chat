@@ -29,7 +29,7 @@ export default function Home() {
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="w-full max-w-md text-center space-y-8 my-auto"
+            className="w-full max-w-md text-center space-y-8 my-auto z-10"
           >
             <div className="space-y-2">
               <div className="flex justify-center mb-6">
@@ -40,19 +40,19 @@ export default function Home() {
               <h1 className="text-5xl font-black text-white tracking-tighter">
                 PulsePair
               </h1>
-              <p className="text-zinc-400 text-lg">
-                Listen together. Pause together.
+              <p className="text-zinc-400 text-lg font-medium">
+                Listen together. Synchronized.
               </p>
             </div>
 
-            <form onSubmit={handleJoin} className="space-y-4">
+            <form onSubmit={handleJoin} className="space-y-4 px-4">
               <input
                 type="text"
                 id="room-id-input"
                 placeholder="Enter Room ID"
                 value={roomInput}
                 onChange={(e) => setRoomInput(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-800 text-white px-6 py-4 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all text-lg font-medium"
+                className="w-full bg-white/5 border border-white/10 text-white px-6 py-4 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all text-lg font-medium backdrop-blur-sm"
               />
               <button
                 id="join-room-btn"
@@ -68,80 +68,69 @@ export default function Home() {
             key="room"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="w-full max-w-4xl flex flex-col items-center py-4 sm:py-8 my-auto"
+            className="w-full max-w-4xl h-full flex flex-col items-center justify-between py-4 sm:py-6 z-10 overflow-hidden"
           >
             {/* Top area - Room info */}
-            <div className="flex-shrink-0 flex justify-center mb-auto pt-2 sm:pt-4">
-              <div className="flex items-center gap-3 bg-zinc-900/50 px-4 py-2 rounded-full border border-white/5">
-                <Users className="w-4 h-4 text-indigo-400" />
-                <span className="text-zinc-400 text-sm font-medium">
-                  Room: <span className="text-white">{roomId}</span>
+            <div className="flex-shrink-0">
+              <div className="flex items-center gap-3 bg-white/5 px-4 py-1.5 rounded-full border border-white/5 backdrop-blur-md">
+                <Users className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="text-zinc-500 text-[10px] sm:text-xs font-black tracking-[0.2em] uppercase">
+                  ROOM: <span className="text-white">{roomId}</span>
                 </span>
               </div>
             </div>
 
-            {/* Main Audio Player container */}
-            <div className="w-full flex flex-col items-center justify-center min-h-0 py-2">
-              <AudioPlayer socket={socket} roomId={roomId} />
+            {/* Main Audio Player container - Centered and takes remaining space */}
+            <div className="w-full flex-1 flex flex-col items-center justify-center min-h-0 px-2 sm:px-4">
+              <div className="w-full max-w-xl scale-[0.9] sm:scale-100 origin-center transition-transform">
+                <AudioPlayer socket={socket} roomId={roomId} />
+              </div>
             </div>
 
             {/* Bottom area - Users and Leave */}
-            <div className="flex-shrink-0 flex flex-col items-center mt-4">
-              <div className="relative flex items-center justify-center w-full h-24 max-w-xs sm:max-w-sm">
+            <div className="flex-shrink-0 w-full flex flex-col items-center pb-2">
+              <div className="relative flex items-center justify-center w-full h-20 sm:h-24 max-w-md">
                 {/* Connecting Line */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-0.5 bg-gradient-to-r from-transparent via-indigo-500 to-transparent opacity-50" />
-                <motion.div 
-                  animate={{ scaleX: [1, 1.5, 1], opacity: [0.3, 0.8, 0.3] }}
-                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-1 bg-indigo-500 blur-sm rounded-full"
-                />
-
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-0.5 bg-gradient-to-r from-transparent via-indigo-500/20 to-transparent" />
+                
                 {/* User 1 Avatar */}
                 <motion.div 
-                  animate={{ y: [-5, 5, -5] }}
-                  transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-                  className="absolute left-8 w-16 h-16 rounded-full border-2 border-indigo-500/50 p-1 bg-zinc-900/80 backdrop-blur-md flex items-center justify-center shadow-[0_0_30px_-5px_rgba(79,70,229,0.4)]"
+                  animate={{ y: [-3, 3, -3] }}
+                  transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
+                  className="absolute left-16 sm:left-20 w-12 h-12 sm:w-16 sm:h-16 rounded-xl border border-white/10 p-1 bg-white/5 backdrop-blur-xl flex items-center justify-center shadow-2xl"
                 >
-                  <img src="https://api.dicebear.com/7.x/micah/svg?seed=Oliver&backgroundColor=transparent" alt="User 1" className="w-full h-full rounded-full object-cover" />
-                  <motion.div 
-                    animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
-                    transition={{ duration: 2, repeat: Infinity, delay: 0.5 }}
-                    className="absolute -right-1 -top-1 w-4 h-4 bg-indigo-500 rounded-full border-2 border-black" 
-                  />
+                  <img src="https://api.dicebear.com/7.x/micah/svg?seed=Oliver&backgroundColor=transparent" alt="User 1" className="w-full h-full rounded-lg object-cover" />
+                  <div className="absolute -right-1 -top-1 w-3 h-3 bg-indigo-500 rounded-full border-2 border-black" />
                 </motion.div>
 
                 {/* User 2 Avatar */}
                 <motion.div 
-                  animate={{ y: [5, -5, 5] }}
-                  transition={{ duration: 4, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-                  className="absolute right-8 w-16 h-16 rounded-full border-2 border-pink-500/50 p-1 bg-zinc-900/80 backdrop-blur-md flex items-center justify-center shadow-[0_0_30px_-5px_rgba(236,72,153,0.4)]"
+                  animate={{ y: [3, -3, 3] }}
+                  transition={{ duration: 5, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+                  className="absolute right-16 sm:right-20 w-12 h-12 sm:w-16 sm:h-16 rounded-xl border border-white/10 p-1 bg-white/5 backdrop-blur-xl flex items-center justify-center shadow-2xl"
                 >
-                  <img src="https://api.dicebear.com/7.x/micah/svg?seed=Sophia&backgroundColor=transparent" alt="User 2" className="w-full h-full rounded-full object-cover" />
-                  <motion.div 
-                    animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
-                    transition={{ duration: 2, repeat: Infinity }}
-                    className="absolute -left-1 -bottom-1 w-4 h-4 bg-pink-500 rounded-full border-2 border-black" 
-                  />
+                  <img src="https://api.dicebear.com/7.x/micah/svg?seed=Sophia&backgroundColor=transparent" alt="User 2" className="w-full h-full rounded-lg object-cover" />
+                  <div className="absolute -left-1 -bottom-1 w-3 h-3 bg-pink-500 rounded-full border-2 border-black" />
                 </motion.div>
 
                 {/* Center pulse */}
                 <motion.div 
-                  animate={{ scale: [0.8, 1.3, 0.8], opacity: [0.7, 1, 0.7] }}
-                  transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-                  className="w-10 h-10 rounded-full bg-pink-500/10 border border-pink-500/30 flex items-center justify-center relative z-10 shadow-[0_0_20px_rgba(236,72,153,0.5)]"
+                  animate={{ scale: [1, 1.2, 1], opacity: [0.8, 1, 0.8] }}
+                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                  className="w-10 h-10 sm:w-12 sm:h-12 rounded-full bg-pink-500/10 border border-pink-500/20 flex items-center justify-center relative z-10 backdrop-blur-sm"
                 >
                   <Heart className="w-5 h-5 text-pink-500 fill-pink-500" />
                 </motion.div>
               </div>
+
+              <button
+                id="leave-room-btn"
+                onClick={() => setActiveRoomId(null)}
+                className="mt-2 sm:mt-4 text-zinc-600 hover:text-white text-[9px] font-black uppercase tracking-[0.3em] transition-all"
+              >
+                Leave Room
+              </button>
             </div>
-              
-            <button
-              id="leave-room-btn"
-              onClick={() => setActiveRoomId(null)}
-              className="text-zinc-600 hover:text-zinc-400 text-sm font-medium transition-colors mt-auto pb-4"
-            >
-              Leave Room
-            </button>
           </motion.div>
         )}
       </AnimatePresence>

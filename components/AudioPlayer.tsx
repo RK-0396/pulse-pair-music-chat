@@ -44,6 +44,9 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
   const [lastMessage, setLastMessage] = useState<ChatMessage | null>(null);
   const [lastSeenMessageId, setLastSeenMessageId] = useState<string | null>(null);
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [spotifyToken, setSpotifyToken] = useState<string | null>(null);
+  const [spotifyPlayer, setSpotifyPlayer] = useState<any>(null);
+  const [deviceId, setDeviceId] = useState<string | null>(null);
   const unreadMarkerRef = useRef<HTMLDivElement>(null);
 
   const EMOJIS = [
@@ -80,20 +83,100 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
   }, []);
 
   useEffect(() => {
-    if (!audioRef.current) return;
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const handleHtml5Play = async () => {
+      const targetUrl = audioUrl || activeTrack.url || "";
+      if (!targetUrl) return;
+      
+      if (audio.src !== window.location.origin + targetUrl && audio.src !== targetUrl) {
+        audio.src = targetUrl;
+      }
+      
+      try {
+        if (audioCtxRef.current?.state === "suspended") await audioCtxRef.current.resume();
+        await audio.play();
+      } catch (err: any) {
+        if (err.name !== "AbortError") console.error("HTML5 Play Error:", err);
+      }
+    };
+
     if (isPlaying) {
-      if (audioCtxRef.current?.state === "suspended") audioCtxRef.current.resume();
-      audioRef.current.play().catch(console.error);
+      if (activeTrack.spotifyUri && spotifyToken && deviceId) {
+        // Play via Spotify
+        fetch(`https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`, {
+          method: 'PUT',
+          body: JSON.stringify({ 
+            uris: [activeTrack.spotifyUri], 
+            position_ms: Math.floor(position * 1000) 
+          }),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${spotifyToken}`
+          },
+        }).catch(err => console.error("Spotify Play Error:", err));
+        
+        // Ensure HTML5 is paused
+        audio.pause();
+      } else {
+        // Play via HTML5 - Ensure Spotify is paused first
+        if (spotifyToken && deviceId) {
+          fetch(`https://api.spotify.com/v1/me/player/pause?device_id=${deviceId}`, {
+            method: 'PUT',
+            headers: { 'Authorization': `Bearer ${spotifyToken}` },
+          }).catch(() => {});
+        }
+        handleHtml5Play();
+      }
     } else {
-      audioRef.current.pause();
+      // Pause All
+      if (spotifyToken && deviceId) {
+        fetch(`https://api.spotify.com/v1/me/player/pause?device_id=${deviceId}`, {
+          method: 'PUT',
+          headers: { 'Authorization': `Bearer ${spotifyToken}` },
+        }).catch(() => {});
+      }
+      audio.pause();
     }
-  }, [isPlaying, audioUrl]);
+  }, [isPlaying, audioUrl, spotifyToken, deviceId, activeTrack]);
 
   useEffect(() => {
-    if (audioRef.current && Math.abs(audioRef.current.currentTime - position) > 0.8) {
+    if (activeTrack.spotifyUri && spotifyToken && deviceId && spotifyPlayer) {
+      // Seek Spotify player if position is out of sync
+      spotifyPlayer.getCurrentState().then((state: any) => {
+        if (state && Math.abs(state.position / 1000 - position) > 1.5) {
+          spotifyPlayer.seek(Math.floor(position * 1000)).catch(console.error);
+        }
+      });
+    } else if (audioRef.current && Math.abs(audioRef.current.currentTime - position) > 0.8) {
       audioRef.current.currentTime = position;
     }
-  }, [position]);
+  }, [position, spotifyPlayer, deviceId, spotifyToken, activeTrack.spotifyUri]);
+
+  // Polling for Spotify position/duration
+  useEffect(() => {
+    let interval: any;
+    if (isPlaying && activeTrack.spotifyUri && spotifyPlayer) {
+      interval = setInterval(async () => {
+        const state = await spotifyPlayer.getCurrentState();
+        if (state) {
+          const c = state.position / 1000;
+          const d = state.duration / 1000;
+          setCurrentTime(c);
+          setDuration(d);
+          setProgress((c / d) * 100);
+        }
+      }, 500); // 500ms for smoother progress
+    }
+    return () => clearInterval(interval);
+  }, [isPlaying, activeTrack.spotifyUri, spotifyPlayer]);
+
+  useEffect(() => {
+    if (activeTrack?.duration) {
+      setDuration(activeTrack.duration);
+    }
+  }, [activeTrack]);
 
   // Handle incoming chat messages
   useEffect(() => {
@@ -115,7 +198,61 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
     };
   }, [socket, activeTab]);
 
-  // Reset unread count when chat is opened and scroll to unread
+  // Handle Spotify Token from URL
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('spotify_token');
+    if (token) {
+      setSpotifyToken(token);
+      window.history.replaceState({}, document.title, "/");
+    }
+  }, []);
+
+  // Initialize Spotify SDK
+  useEffect(() => {
+    if (!spotifyToken) return;
+
+    const script = document.createElement("script");
+    script.src = "https://sdk.scdn.co/spotify-player.js";
+    script.async = true;
+    document.body.appendChild(script);
+
+    window.onSpotifyWebPlaybackSDKReady = () => {
+      const player = new (window as any).Spotify.Player({
+        name: 'PulsePair Web Player',
+        getOAuthToken: (cb: any) => { cb(spotifyToken); },
+        volume: 0.5
+      });
+
+      player.addListener('ready', ({ device_id }: any) => {
+        console.log('Ready with Device ID', device_id);
+        setDeviceId(device_id);
+      });
+
+      player.addListener('player_state_changed', (state: any) => {
+        if (!state) return;
+        setDuration(state.duration / 1000);
+        setCurrentTime(state.position / 1000);
+        setProgress((state.position / state.duration) * 100);
+        
+        // If track ended (state.position is 0 and not playing)
+        if (state.paused && state.position === 0 && state.restrictions.disallow_pausing_reasons) {
+           // handle track end if needed
+        }
+      });
+
+      player.addListener('not_ready', ({ device_id }: any) => {
+        console.log('Device ID has gone offline', device_id);
+      });
+
+      player.connect();
+      setSpotifyPlayer(player);
+    };
+
+    return () => {
+      document.body.removeChild(script);
+    };
+  }, [spotifyToken]);
   useEffect(() => {
     if (activeTab === 'chat') {
       setUnreadCount(0);
@@ -193,11 +330,19 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
   };
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!audioRef.current || !duration) return;
+    if (!duration) return;
     const r = e.currentTarget.getBoundingClientRect();
     const t = ((e.clientX - r.left) / r.width) * duration;
-    audioRef.current.currentTime = t;
+    
+    if (activeTrack.spotifyUri && spotifyPlayer) {
+      spotifyPlayer.seek(Math.floor(t * 1000)).catch(console.error);
+    } else if (audioRef.current) {
+      audioRef.current.currentTime = t;
+    }
+    
     setPosition(t);
+    setCurrentTime(t);
+    setProgress((t / duration) * 100);
 
     if (socket) {
       if (isPlaying) {
@@ -239,15 +384,16 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
   const searchSpotify = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!searchQuery.trim()) return;
+
     setIsSearching(true);
     setSearchError("");
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
+      const res = await fetch(`/api/spotify/search?q=${encodeURIComponent(searchQuery)}`);
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to search");
+      if (data.error) throw new Error(data.error);
       setSearchResults(data.tracks || []);
     } catch (err: any) {
-      setSearchError(err.message);
+      setSearchError(err.message || "Failed to search Spotify");
     } finally {
       setIsSearching(false);
     }
@@ -267,17 +413,17 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
         className="bg-white/5 backdrop-blur-2xl border border-white/10 rounded-3xl overflow-hidden shadow-2xl relative"
       >
         {/* Top Actions */}
-        <div className="absolute top-4 right-4 flex gap-2 z-10">
+        <div className="absolute top-6 right-6 flex gap-3 z-10">
           <button
             onClick={() => setActiveTab(activeTab === 'search' ? null : 'search')}
-            className={`p-2 rounded-xl transition-all ${activeTab === 'search' ? "bg-green-500/30 text-green-300" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+            className={`p-2.5 rounded-xl transition-all ${activeTab === 'search' ? "bg-green-500/20 text-green-400 border border-green-500/20" : "text-zinc-400 hover:text-white hover:bg-white/5"}`}
             title="Search Online"
           >
             <Search className="w-5 h-5" />
           </button>
           <button
             onClick={() => setActiveTab(activeTab === 'chat' ? null : 'chat')}
-            className={`p-2 rounded-xl transition-all relative ${activeTab === 'chat' ? "bg-blue-500/30 text-blue-300" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+            className={`p-2.5 rounded-xl transition-all relative ${activeTab === 'chat' ? "bg-blue-500/20 text-blue-400 border border-blue-500/20" : "text-zinc-400 hover:text-white hover:bg-white/5"}`}
             title="Room Chat"
           >
             <MessageCircle className="w-5 h-5" />
@@ -289,7 +435,7 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
           </button>
           <button
             onClick={() => setActiveTab(activeTab === 'playlist' ? null : 'playlist')}
-            className={`p-2 rounded-xl transition-all ${activeTab === 'playlist' ? "bg-purple-500/30 text-purple-300" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+            className={`p-2.5 rounded-xl transition-all ${activeTab === 'playlist' ? "bg-purple-500/20 text-purple-400 border border-purple-500/20" : "text-zinc-400 hover:text-white hover:bg-white/5"}`}
             title="Local Playlist"
           >
             <ListMusic className="w-5 h-5" />
@@ -297,76 +443,96 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
         </div>
 
         {/* Track header */}
-        <div className="flex items-center gap-4 p-6 pb-0 pt-16">
+        <div className="flex items-center gap-6 p-6 pb-0 pt-16">
           {/* Album art */}
           <div
-            className="w-20 h-20 rounded-2xl flex items-center justify-center shadow-xl flex-shrink-0 transition-all duration-500 overflow-hidden relative"
+            className="w-20 h-20 rounded-xl flex items-center justify-center shadow-2xl flex-shrink-0 transition-all duration-500 overflow-hidden relative ring-1 ring-white/10"
             style={{ background: `linear-gradient(135deg, ${(activeTrack?.color || '#a855f7')}cc, ${(activeTrack?.color || '#a855f7')}44)` }}
           >
             {activeTrack.albumArt ? (
               <motion.img
                 src={activeTrack.albumArt}
                 className="w-full h-full object-cover"
-                animate={isPlaying ? { scale: 1.05, rotate: 3 } : { scale: 1, rotate: 0 }}
+                animate={isPlaying ? { scale: 1.05 } : { scale: 1 }}
                 transition={{ duration: 4, repeat: Infinity, repeatType: 'reverse', ease: "easeInOut" }}
               />
             ) : (
-              <motion.div animate={isPlaying ? { rotate: 360 } : { rotate: 0 }} transition={{ duration: 8, repeat: Infinity, ease: "linear" }}>
-                <Music2 className="text-white w-10 h-10" />
+              <motion.div animate={isPlaying ? { rotate: 360 } : { rotate: 0 }} transition={{ duration: 12, repeat: Infinity, ease: "linear" }}>
+                <Music2 className="text-white/80 w-10 h-10" />
               </motion.div>
             )}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-60" />
           </div>
-          <div className="flex-1 min-w-0 pr-4">
-            <motion.h3 key={activeTrack?.id || "unknown"} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="text-white font-extrabold text-2xl truncate tracking-tight">
+
+          <div className="flex-1 min-w-0">
+            <motion.h3 
+              key={activeTrack?.id || "unknown"} 
+              initial={{ opacity: 0, y: 5 }} 
+              animate={{ opacity: 1, y: 0 }} 
+              className="text-white font-black text-xl sm:text-2xl truncate leading-tight tracking-tight"
+            >
               {activeTrack?.title || "Unknown Track"}
             </motion.h3>
-            <p className="text-zinc-400 text-base font-medium truncate mt-1">{activeTrack?.artist || "Unknown Artist"}</p>
+            <p className="text-zinc-400 text-sm sm:text-base font-semibold truncate mt-1 opacity-80">{activeTrack?.artist || "Unknown Artist"}</p>
+            
+            <div className="mt-3">
+              {activeTrack.spotifyUri && !spotifyToken ? (
+                <button 
+                  onClick={() => window.location.href = '/api/auth/spotify'}
+                  className="group flex items-center gap-2 text-[9px] font-black text-green-400 uppercase tracking-widest bg-green-500/10 px-3 py-1.5 rounded-full border border-green-500/20 hover:bg-green-500/20 transition-all hover:scale-105"
+                >
+                  <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                  Connect Spotify
+                </button>
+              ) : spotifyToken && activeTrack.spotifyUri ? (
+                <div className="inline-flex items-center gap-2 bg-green-500/10 px-3 py-1 rounded-full border border-green-500/10">
+                  <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+                  <span className="text-[9px] font-black text-green-400 uppercase tracking-[0.15em]">Spotify Premium Active</span>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
 
         {/* Visualizer */}
-        <div className="px-6 pt-6">
-          <AudioVisualizer analyser={analyser} isPlaying={isPlaying} />
+        <div className="px-6 pt-4">
+          <AudioVisualizer analyser={analyser} isPlaying={isPlaying} isSpotify={!!activeTrack.spotifyUri} />
         </div>
 
         {/* Progress */}
-        <div className="px-6 pt-5">
-          <div className="relative w-full h-2 bg-white/10 rounded-full cursor-pointer group" onClick={handleSeek}>
+        <div className="px-6 pt-3">
+          <div className="relative w-full h-1.5 bg-white/10 rounded-full cursor-pointer group" onClick={handleSeek}>
             <motion.div
               className="absolute top-0 left-0 h-full rounded-full transition-all"
               style={{ width: `${progress}%`, background: `linear-gradient(90deg, ${activeTrack?.color || '#a855f7'}, #ec4899)` }}
             />
-            <div
-              className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white shadow-[0_0_10px_rgba(255,255,255,0.5)] opacity-0 group-hover:opacity-100 transition-opacity"
-              style={{ left: `calc(${progress}% - 8px)`, background: activeTrack?.color || '#a855f7' }}
-            />
           </div>
-          <div className="flex justify-between text-zinc-400 text-xs font-medium tracking-wider mt-2">
+          <div className="flex justify-between text-zinc-500 text-[10px] font-bold tracking-wider mt-1.5">
             <span>{fmt(currentTime)}</span>
             <span>{fmt(duration)}</span>
           </div>
         </div>
 
         {/* Controls */}
-        <div className="flex justify-center items-center gap-10 px-6 pb-8 pt-4">
-          <button onClick={handleSkipPrev} className="text-zinc-400 hover:text-white transition-all hover:scale-110 active:scale-90">
-            <SkipBack className="w-8 h-8 fill-current" />
+        <div className="flex justify-center items-center gap-10 px-6 pb-6 pt-2">
+          <button onClick={handleSkipPrev} className="text-zinc-500 hover:text-white transition-all hover:scale-110 active:scale-90">
+            <SkipBack className="w-7 h-7 fill-current" />
           </button>
           <button
             id="play-pause-btn"
             onClick={isPlaying ? handlePause : handlePlay}
-            className="w-20 h-20 rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.3)] hover:scale-105 active:scale-95 transition-all"
+            className="w-16 h-16 rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.3)] hover:scale-105 active:scale-95 transition-all"
             style={{ background: `linear-gradient(135deg, ${activeTrack?.color || '#a855f7'}, #ec4899)` }}
           >
             <AnimatePresence mode="wait">
               {isPlaying
-                ? <motion.span key="pause" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} className="flex"><Pause className="w-8 h-8 text-white fill-white" /></motion.span>
-                : <motion.span key="play" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} className="flex"><Play className="w-8 h-8 text-white fill-white translate-x-1" /></motion.span>
+                ? <motion.span key="pause" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} className="flex"><Pause className="w-7 h-7 text-white fill-white" /></motion.span>
+                : <motion.span key="play" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} className="flex"><Play className="w-7 h-7 text-white fill-white translate-x-1" /></motion.span>
               }
             </AnimatePresence>
           </button>
-          <button onClick={handleSkipNext} className="text-zinc-400 hover:text-white transition-all hover:scale-110 active:scale-90">
-            <SkipForward className="w-8 h-8 fill-current" />
+          <button onClick={handleSkipNext} className="text-zinc-500 hover:text-white transition-all hover:scale-110 active:scale-90">
+            <SkipForward className="w-7 h-7 fill-current" />
           </button>
         </div>
 
@@ -409,7 +575,7 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
                 {activeTab === 'playlist' && (
                   <div className="space-y-1">
                     {PLAYLIST.map((track, i) => {
-                      const active = track.url === activeTrack.url;
+                      const active = track.id === activeTrack?.id;
                       return (
                         <TrackItem key={track.id} track={track} active={active} isPlaying={isPlaying} index={i + 1} onSelect={() => handleSelectTrack(track, PLAYLIST)} />
                       );
@@ -437,10 +603,10 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
 
                     <div className="space-y-1 overflow-y-auto flex-1">
                       {!isSearching && searchResults.length === 0 && searchQuery && !searchError && (
-                        <div className="text-center text-zinc-500 py-8">No previewable tracks found</div>
+                        <div className="text-center text-zinc-500 py-8">No tracks found</div>
                       )}
                       {searchResults.map((track, i) => {
-                        const active = track.url === activeTrack.url;
+                        const active = track.id === activeTrack?.id;
                         return (
                           <TrackItem key={track.id} track={track} active={active} isPlaying={isPlaying} index={i + 1} onSelect={() => handleSelectTrack(track, searchResults)} isSearch />
                         );
@@ -598,7 +764,6 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
 
       <audio
         ref={audioRef}
-        src={audioUrl || PLAYLIST[0].url}
         crossOrigin="anonymous"
         onTimeUpdate={onTimeUpdate}
         onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
