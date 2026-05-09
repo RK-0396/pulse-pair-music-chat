@@ -53,5 +53,5 @@ jobs:
             --image docker.io/${{ secrets.DOCKER_USERNAME }}/pulsepair:latest \
             --target-port 3000 \
             --ingress 'external' \
-            --set-env-vars "SPOTIFY_CLIENT_ID=${{ secrets.SPOTIFY_CLIENT_ID }}" "SPOTIFY_CLIENT_SECRET=${{ secrets.SPOTIFY_CLIENT_SECRET }}" \
+            --env-vars "SPOTIFY_CLIENT_ID=${{ secrets.SPOTIFY_CLIENT_ID }}" "SPOTIFY_CLIENT_SECRET=${{ secrets.SPOTIFY_CLIENT_SECRET }}" \
             --query properties.configuration.ingress.fqdn
