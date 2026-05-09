@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useRoomStore } from "@/store/useRoomStore";
 import { SocketEvent, ChatMessage } from "@/lib/types";
-import { Play, Pause, SkipForward, SkipBack, Music2, ListMusic, Search, MessageCircle, Send } from "lucide-react";
+import { Play, Pause, SkipForward, SkipBack, Music2, ListMusic, Search, MessageCircle, Send, CornerUpLeft, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { AudioVisualizer } from "./AudioVisualizer";
 
@@ -42,6 +42,9 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
   const [showEmojiPalette, setShowEmojiPalette] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [lastMessage, setLastMessage] = useState<ChatMessage | null>(null);
+  const [lastSeenMessageId, setLastSeenMessageId] = useState<string | null>(null);
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const unreadMarkerRef = useRef<HTMLDivElement>(null);
 
   const EMOJIS = [
     "😊", "😂", "🤣", "❤️", "😍", "🥰", "😘", "😭", "😤", "😡", "😱", "😴",
@@ -112,10 +115,25 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
     };
   }, [socket, activeTab]);
 
-  // Reset unread count when chat is opened
+  // Reset unread count when chat is opened and scroll to unread
   useEffect(() => {
-    if (activeTab === 'chat') setUnreadCount(0);
-  }, [activeTab]);
+    if (activeTab === 'chat') {
+      setUnreadCount(0);
+      // Scroll to the unread marker if it exists, otherwise bottom
+      setTimeout(() => {
+        if (unreadMarkerRef.current) {
+          unreadMarkerRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+        } else {
+          chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+        }
+      }, 300);
+      
+      // Update last seen after viewing
+      if (messages.length > 0) {
+        setLastSeenMessageId(messages[messages.length - 1].id);
+      }
+    }
+  }, [activeTab, messages.length]);
 
   const handlePlay = () => {
     if (!socket) return;
@@ -197,16 +215,25 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!chatInput.trim() || !socket) return;
-    const msg: ChatMessage = {
-      id: Math.random().toString(36).substring(7),
-      senderId: socket.id,
-      senderName: "User " + socket.id.substring(0, 4),
-      text: chatInput.trim(),
-      timestamp: Date.now(),
-    };
-    socket.emit(SocketEvent.CHAT_MESSAGE, { roomId, message: msg });
-    setChatInput("");
+    if (chatInput.trim() && socket) {
+      const msg: ChatMessage = {
+        id: Math.random().toString(36).substr(2, 9),
+        senderId: socket.id,
+        senderName: "You", // The server will overwrite this or handle it
+        text: chatInput,
+        timestamp: Date.now(),
+        ...(replyingTo && {
+          replyTo: {
+            id: replyingTo.id,
+            text: replyingTo.text,
+            senderName: replyingTo.senderName
+          }
+        })
+      };
+      socket.emit(SocketEvent.CHAT_MESSAGE, { roomId, message: msg });
+      setChatInput("");
+      setReplyingTo(null);
+    }
   };
 
   const searchSpotify = async (e: React.FormEvent) => {
@@ -425,27 +452,62 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
                 {/* CHAT TAB */}
                 {activeTab === 'chat' && (
                   <div className="flex flex-col h-full">
-                    <div className="flex-1 overflow-y-auto px-2 space-y-4 pb-4">
+                    <div className="flex-1 overflow-y-auto px-2 space-y-4 pb-4 scrollbar-hide">
                       {messages.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-zinc-500 text-sm gap-2">
                           <MessageCircle className="w-8 h-8 opacity-20" />
                           <p>Start chatting with your room!</p>
                         </div>
                       ) : (
-                        messages.map((msg) => {
+                        messages.map((msg, i) => {
                           const isMe = msg.senderId === socket?.id;
+                          const isNew = lastSeenMessageId && msg.id !== lastSeenMessageId && !isMe && messages.findIndex(m => m.id === lastSeenMessageId) < i;
+                          const isFirstNew = isNew && (i === 0 || messages[i-1].id === lastSeenMessageId || messages.findIndex(m => m.id === lastSeenMessageId) === i - 1);
+
                           return (
-                            <motion.div
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              key={msg.id}
-                              className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
-                            >
-                              <span className="text-[10px] text-zinc-500 mb-1 px-1">{isMe ? "You" : msg.senderName}</span>
-                              <div className={`px-4 py-2 rounded-2xl max-w-[85%] text-sm ${isMe ? 'bg-blue-600 text-white rounded-tr-sm' : 'bg-white/10 text-zinc-200 rounded-tl-sm'}`}>
-                                {msg.text}
-                              </div>
-                            </motion.div>
+                            <React.Fragment key={msg.id}>
+                              {isFirstNew && (
+                                <div ref={unreadMarkerRef} className="flex items-center gap-4 py-2">
+                                  <div className="h-px bg-blue-500/30 flex-1" />
+                                  <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">New Messages</span>
+                                  <div className="h-px bg-blue-500/30 flex-1" />
+                                </div>
+                              )}
+                              <motion.div
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className={`group flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
+                              >
+                                <span className="text-[10px] text-zinc-500 mb-1 px-1">{isMe ? "You" : msg.senderName}</span>
+                                <div className="flex items-end gap-2 max-w-[85%] relative">
+                                  {isMe && (
+                                    <button
+                                      onClick={() => setReplyingTo(msg)}
+                                      className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-white transition-opacity shrink-0"
+                                    >
+                                      <CornerUpLeft className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                  <div className={`px-4 py-2 rounded-2xl text-sm ${isMe ? 'bg-blue-600 text-white rounded-tr-sm' : 'bg-white/10 text-zinc-200 rounded-tl-sm border border-white/5'}`}>
+                                    {msg.replyTo && (
+                                      <div className="bg-black/20 rounded-lg p-2 mb-2 border-l-2 border-blue-400 text-[11px] opacity-80">
+                                        <p className="font-bold text-blue-300 mb-0.5">{msg.replyTo.senderName}</p>
+                                        <p className="truncate italic">{msg.replyTo.text}</p>
+                                      </div>
+                                    )}
+                                    {msg.text}
+                                  </div>
+                                  {!isMe && (
+                                    <button
+                                      onClick={() => setReplyingTo(msg)}
+                                      className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-white transition-opacity shrink-0"
+                                    >
+                                      <CornerUpLeft className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                </div>
+                              </motion.div>
+                            </React.Fragment>
                           )
                         })
                       )}
@@ -454,6 +516,27 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
 
                     <form onSubmit={handleSendMessage} className="shrink-0 mt-2 px-1 relative">
                       <AnimatePresence>
+                        {replyingTo && (
+                          <motion.div
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: 10 }}
+                            className="absolute bottom-full left-1 right-1 mb-2 bg-[#252533] border border-blue-500/30 rounded-xl p-3 flex items-center gap-3 shadow-2xl backdrop-blur-2xl"
+                          >
+                            <div className="w-1 h-8 bg-blue-500 rounded-full" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[10px] text-blue-400 font-bold uppercase tracking-wider">Replying to {replyingTo.senderName}</p>
+                              <p className="text-xs text-zinc-400 truncate italic">{replyingTo.text}</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setReplyingTo(null)}
+                              className="p-1 hover:bg-white/10 rounded-full transition-colors"
+                            >
+                              <X className="w-4 h-4 text-zinc-500" />
+                            </button>
+                          </motion.div>
+                        )}
                         {showEmojiPalette && (
                           <motion.div
                             initial={{ opacity: 0, y: 10, scale: 0.9 }}
@@ -526,25 +609,25 @@ export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
       <AnimatePresence>
         {showToast && lastMessage && activeTab !== 'chat' && (
           <motion.div
-            initial={{ opacity: 0, y: 50, scale: 0.9 }}
+            initial={{ opacity: 0, y: -100, scale: 0.9 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 20, scale: 0.9 }}
+            exit={{ opacity: 0, y: -100, scale: 0.9 }}
             onClick={() => {
               setActiveTab('chat');
               setShowToast(false);
             }}
-            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[100] w-[90%] max-w-sm cursor-pointer"
+            className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-[90%] max-w-md cursor-pointer"
           >
-            <div className="bg-[#1a1a24]/90 backdrop-blur-2xl border border-white/10 rounded-2xl p-4 shadow-2xl flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center shrink-0">
-                <MessageCircle className="w-5 h-5 text-blue-400" />
+            <div className="bg-[#1a1a24]/95 backdrop-blur-3xl border border-blue-500/30 rounded-2xl p-4 shadow-[0_20px_50px_rgba(0,0,0,0.5)] flex items-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shrink-0 shadow-lg shadow-blue-500/20">
+                <MessageCircle className="w-6 h-6 text-white" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">{lastMessage.senderName}</p>
-                <p className="text-sm text-white truncate font-medium">{lastMessage.text}</p>
+                <p className="text-[10px] text-blue-400 font-black uppercase tracking-[0.2em] mb-0.5">New Message from {lastMessage.senderName}</p>
+                <p className="text-sm text-zinc-100 truncate font-medium">{lastMessage.text}</p>
               </div>
-              <div className="shrink-0 text-[10px] text-blue-400 font-black animate-pulse bg-blue-500/10 px-2 py-1 rounded-full border border-blue-500/20">
-                NEW
+              <div className="shrink-0">
+                <div className="w-2 h-2 rounded-full bg-blue-500 animate-ping" />
               </div>
             </div>
           </motion.div>

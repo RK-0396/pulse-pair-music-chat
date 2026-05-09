@@ -53,4 +53,9 @@ export interface ChatMessage {
   senderName: string;
   text: string;
   timestamp: number;
+  replyTo?: {
+    id: string;
+    text: string;
+    senderName: string;
+  };
 }
