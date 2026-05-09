@@ -1,0 +1,490 @@
+"use client";
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { useRoomStore } from "@/store/useRoomStore";
+import { SocketEvent, ChatMessage } from "@/lib/types";
+import { Play, Pause, SkipForward, SkipBack, Music2, ListMusic, Search, MessageCircle, Send } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { AudioVisualizer } from "./AudioVisualizer";
+
+const PLAYLIST = [
+  { id: "0", title: "Majboor-Jk", artist: "JK - Special Track", url: "/audio/majboor-j-2026-05-01.mp4", color: "#f43f5e" },
+  { id: "1", title: "Emotional Love Song", artist: "Hindi", url: "/audio/emotional-hindi-love-song.mp3", color: "#a855f7" },
+  { id: "2", title: "At Every Turn There's You", artist: "MT Soundscapes", url: "/audio/mtsoundscapes-at-every-turn-theres-you.mp3", color: "#ec4899" },
+  { id: "3", title: "Dilse Judaai", artist: "MT Soundscapes", url: "/audio/mtsoundscapes-dilse-judaai-song.mp3", color: "#f59e0b" },
+  { id: "4", title: "Midnight Echo", artist: "PulsePair Original", url: "/audio/music.m4a", color: "#06b6d4" },
+  { id: "5", title: "Pal Yahi Romantic Ballad", artist: "Hindi", url: "/audio/pal-yahi-romantic-hindi-love-ballad.mp3", color: "#10b981" },
+  { id: "6", title: "Phir Se Mile Hum", artist: "Indian Love Song", url: "/audio/phir-se-mile-hum-indian-love-song.mp3", color: "#ef4444" },
+  { id: "7", title: "Dil Ki Aag", artist: "Predicson Music", url: "/audio/predicson_music-dil-ki-aag.mp3", color: "#f97316" },
+  { id: "8", title: "Teri Dastan", artist: "Predicson Music", url: "/audio/predicson_music-teri-dastan.mp3", color: "#8b5cf6" },
+  { id: "9", title: "Sonican Love Music", artist: "Sonican", url: "/audio/sonican-love-music.mp3", color: "#14b8a6" },
+  { id: "10", title: "Romantic Love Music", artist: "Tunetank", url: "/audio/tunetank-romantic-love-music.mp3", color: "#3b82f6" },
+];
+
+interface Props { socket: any; roomId: string; }
+
+export const AudioPlayer: React.FC<Props> = ({ socket, roomId }) => {
+  const { isPlaying, audioUrl, position, setPlaying, setPosition, setAudioUrl } = useRoomStore();
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const sourceCreated = useRef(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+  const [activeTab, setActiveTab] = useState<'playlist' | 'search' | 'chat' | null>(null);
+
+  // Chat State
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+
+  // Search State
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+
+  const activeTrack = 
+    searchResults.find(t => t.url === audioUrl) ?? 
+    PLAYLIST.find(t => t.url === (audioUrl || PLAYLIST[0].url)) ?? 
+    PLAYLIST[0];
+
+  const initAudioCtx = useCallback(() => {
+    if (!audioRef.current || sourceCreated.current) return;
+    const ctx = new AudioContext();
+    const an = ctx.createAnalyser();
+    an.fftSize = 256;
+    const src = ctx.createMediaElementSource(audioRef.current);
+    src.connect(an);
+    an.connect(ctx.destination);
+    audioCtxRef.current = ctx;
+    analyserRef.current = an;
+    sourceCreated.current = true;
+    setAnalyser(an);
+  }, []);
+
+  useEffect(() => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      if (audioCtxRef.current?.state === "suspended") audioCtxRef.current.resume();
+      audioRef.current.play().catch(console.error);
+    } else {
+      audioRef.current.pause();
+    }
+  }, [isPlaying, audioUrl]);
+
+  useEffect(() => {
+    if (audioRef.current && Math.abs(audioRef.current.currentTime - position) > 0.8) {
+      audioRef.current.currentTime = position;
+    }
+  }, [position]);
+
+  // Handle incoming chat messages
+  useEffect(() => {
+    if (!socket) return;
+    const handleNewMessage = (msg: ChatMessage) => {
+      setMessages((prev) => [...prev, msg]);
+      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+    };
+    socket.on(SocketEvent.CHAT_MESSAGE, handleNewMessage);
+    return () => {
+      socket.off(SocketEvent.CHAT_MESSAGE, handleNewMessage);
+    };
+  }, [socket]);
+
+  const handlePlay = () => {
+    if (!socket) return;
+    initAudioCtx();
+    if (audioCtxRef.current?.state === "suspended") audioCtxRef.current.resume();
+    const url = audioUrl || PLAYLIST[0].url;
+    socket.emit(SocketEvent.PLAY, { roomId, audioUrl: url, position: audioRef.current?.currentTime || 0 });
+    setAudioUrl(url);
+    setPlaying(true);
+  };
+
+  const handlePause = () => {
+    if (!socket) return;
+    socket.emit(SocketEvent.PAUSE, roomId);
+    setPlaying(false);
+  };
+
+  const handleSelectTrack = (track: any) => {
+    if (!socket) return;
+    initAudioCtx();
+    socket.emit(SocketEvent.PLAY, { roomId, audioUrl: track.url, position: 0 });
+    setAudioUrl(track.url);
+    setPosition(0);
+    setPlaying(true);
+    // don't close tab immediately to let them select more if they want
+  };
+
+  const handleSkipNext = () => {
+    // Basic skip logic for local playlist
+    const idx = PLAYLIST.findIndex(t => t.url === activeTrack.url);
+    if (idx >= 0) {
+      const next = PLAYLIST[(idx + 1) % PLAYLIST.length];
+      handleSelectTrack(next);
+    }
+  };
+
+  const handleSkipPrev = () => {
+    const idx = PLAYLIST.findIndex(t => t.url === activeTrack.url);
+    if (idx >= 0) {
+      const prev = PLAYLIST[(idx - 1 + PLAYLIST.length) % PLAYLIST.length];
+      handleSelectTrack(prev);
+    }
+  };
+
+  const onTimeUpdate = () => {
+    if (!audioRef.current) return;
+    const c = audioRef.current.currentTime;
+    const d = audioRef.current.duration || 1;
+    setCurrentTime(c);
+    setProgress((c / d) * 100);
+  };
+
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!audioRef.current || !duration) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const t = ((e.clientX - r.left) / r.width) * duration;
+    audioRef.current.currentTime = t;
+    setPosition(t);
+
+    if (socket) {
+      if (isPlaying) {
+        socket.emit(SocketEvent.PLAY, { roomId, audioUrl: audioUrl || PLAYLIST[0].url, position: t });
+      } else {
+        socket.emit(SocketEvent.SYNC_TICK, { roomId, position: t });
+      }
+    }
+  };
+
+  const fmt = (s: number) => {
+    if (!isFinite(s)) return "0:00";
+    return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  };
+
+  const handleSendMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || !socket) return;
+    const msg: ChatMessage = {
+      id: Math.random().toString(36).substring(7),
+      senderId: socket.id,
+      senderName: "User " + socket.id.substring(0, 4),
+      text: chatInput.trim(),
+      timestamp: Date.now(),
+    };
+    socket.emit(SocketEvent.CHAT_MESSAGE, { roomId, message: msg });
+    setChatInput("");
+  };
+
+  const searchSpotify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim()) return;
+    setIsSearching(true);
+    setSearchError("");
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to search");
+      setSearchResults(data.tracks || []);
+    } catch (err: any) {
+      setSearchError(err.message);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  return (
+    <div className="relative w-full max-w-xl">
+      {/* Glow behind card */}
+      <div
+        className="absolute inset-0 rounded-3xl blur-2xl opacity-30 -z-10 transition-all duration-700"
+        style={{ background: `radial-gradient(ellipse, ${activeTrack.color}88, transparent 70%)` }}
+      />
+
+      <motion.div
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white/5 backdrop-blur-2xl border border-white/10 rounded-3xl overflow-hidden shadow-2xl relative"
+      >
+        {/* Top Actions */}
+        <div className="absolute top-4 right-4 flex gap-2 z-10">
+          <button
+            onClick={() => setActiveTab(activeTab === 'search' ? null : 'search')}
+            className={`p-2 rounded-xl transition-all ${activeTab === 'search' ? "bg-green-500/30 text-green-300" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+            title="Search Online"
+          >
+            <Search className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => setActiveTab(activeTab === 'chat' ? null : 'chat')}
+            className={`p-2 rounded-xl transition-all ${activeTab === 'chat' ? "bg-blue-500/30 text-blue-300" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+            title="Room Chat"
+          >
+            <MessageCircle className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => setActiveTab(activeTab === 'playlist' ? null : 'playlist')}
+            className={`p-2 rounded-xl transition-all ${activeTab === 'playlist' ? "bg-purple-500/30 text-purple-300" : "text-zinc-400 hover:text-white hover:bg-white/10"}`}
+            title="Local Playlist"
+          >
+            <ListMusic className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Track header */}
+        <div className="flex items-center gap-4 p-6 pb-0 pt-16">
+          {/* Album art */}
+          <div
+            className="w-20 h-20 rounded-2xl flex items-center justify-center shadow-xl flex-shrink-0 transition-all duration-500 overflow-hidden relative"
+            style={{ background: `linear-gradient(135deg, ${activeTrack.color}cc, ${activeTrack.color}44)` }}
+          >
+            {activeTrack.albumArt ? (
+              <motion.img 
+                src={activeTrack.albumArt} 
+                className="w-full h-full object-cover"
+                animate={isPlaying ? { scale: 1.05, rotate: 3 } : { scale: 1, rotate: 0 }} 
+                transition={{ duration: 4, repeat: Infinity, repeatType: 'reverse', ease: "easeInOut" }}
+              />
+            ) : (
+              <motion.div animate={isPlaying ? { rotate: 360 } : { rotate: 0 }} transition={{ duration: 8, repeat: Infinity, ease: "linear" }}>
+                <Music2 className="text-white w-10 h-10" />
+              </motion.div>
+            )}
+          </div>
+          <div className="flex-1 min-w-0 pr-4">
+            <motion.h3 key={activeTrack.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} className="text-white font-extrabold text-2xl truncate tracking-tight">
+              {activeTrack.title}
+            </motion.h3>
+            <p className="text-zinc-400 text-base font-medium truncate mt-1">{activeTrack.artist}</p>
+          </div>
+        </div>
+
+        {/* Visualizer */}
+        <div className="px-6 pt-6">
+          <AudioVisualizer analyser={analyser} isPlaying={isPlaying} />
+        </div>
+
+        {/* Progress */}
+        <div className="px-6 pt-5">
+          <div className="relative w-full h-2 bg-white/10 rounded-full cursor-pointer group" onClick={handleSeek}>
+            <motion.div
+              className="absolute top-0 left-0 h-full rounded-full transition-all"
+              style={{ width: `${progress}%`, background: `linear-gradient(90deg, ${activeTrack.color}, #ec4899)` }}
+            />
+            <div
+              className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-white shadow-[0_0_10px_rgba(255,255,255,0.5)] opacity-0 group-hover:opacity-100 transition-opacity"
+              style={{ left: `calc(${progress}% - 8px)`, background: activeTrack.color }}
+            />
+          </div>
+          <div className="flex justify-between text-zinc-400 text-xs font-medium tracking-wider mt-2">
+            <span>{fmt(currentTime)}</span>
+            <span>{fmt(duration)}</span>
+          </div>
+        </div>
+
+        {/* Controls */}
+        <div className="flex justify-center items-center gap-10 px-6 pb-8 pt-4">
+          <button onClick={handleSkipPrev} className="text-zinc-400 hover:text-white transition-all hover:scale-110 active:scale-90">
+            <SkipBack className="w-8 h-8 fill-current" />
+          </button>
+          <button
+            id="play-pause-btn"
+            onClick={isPlaying ? handlePause : handlePlay}
+            className="w-20 h-20 rounded-full flex items-center justify-center shadow-[0_0_30px_rgba(0,0,0,0.3)] hover:scale-105 active:scale-95 transition-all"
+            style={{ background: `linear-gradient(135deg, ${activeTrack.color}, #ec4899)` }}
+          >
+            <AnimatePresence mode="wait">
+              {isPlaying
+                ? <motion.span key="pause" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} className="flex"><Pause className="w-8 h-8 text-white fill-white" /></motion.span>
+                : <motion.span key="play" initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }} className="flex"><Play className="w-8 h-8 text-white fill-white translate-x-1" /></motion.span>
+              }
+            </AnimatePresence>
+          </button>
+          <button onClick={handleSkipNext} className="text-zinc-400 hover:text-white transition-all hover:scale-110 active:scale-90">
+            <SkipForward className="w-8 h-8 fill-current" />
+          </button>
+        </div>
+
+        {/* Expanding Panels */}
+        <AnimatePresence>
+          {activeTab && (
+            <motion.div
+              initial={{ opacity: 0, y: "100%" }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: "100%" }}
+              transition={{ type: "spring", damping: 25, stiffness: 200 }}
+              className="absolute inset-0 z-50 bg-[#12121a]/95 backdrop-blur-3xl flex flex-col rounded-3xl overflow-hidden border-t border-white/10"
+            >
+              <div className="flex items-center justify-between p-5 pb-3 border-b border-white/5 bg-white/5">
+                <h3 className="text-white font-bold text-lg flex items-center gap-2 tracking-wide">
+                  {activeTab === 'playlist' && <><ListMusic className="w-5 h-5 text-purple-400" /> Local Playlist</>}
+                  {activeTab === 'search' && <><Search className="w-5 h-5 text-pink-400" /> Online Search</>}
+                  {activeTab === 'chat' && <><MessageCircle className="w-5 h-5 text-blue-400" /> Room Chat</>}
+                </h3>
+                <button
+                  onClick={() => setActiveTab(null)}
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-white/10 text-zinc-300 hover:text-white hover:bg-white/20 transition-all hover:rotate-90"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Panel Content */}
+              <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 relative">
+                
+                {/* PLAYLIST TAB */}
+                {activeTab === 'playlist' && (
+                  <div className="space-y-1">
+                    {PLAYLIST.map((track, i) => {
+                      const active = track.url === activeTrack.url;
+                      return (
+                        <TrackItem key={track.id} track={track} active={active} isPlaying={isPlaying} index={i+1} onSelect={() => handleSelectTrack(track)} />
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* SEARCH TAB */}
+                {activeTab === 'search' && (
+                  <div className="flex flex-col h-full">
+                    <form onSubmit={searchSpotify} className="relative mb-4 shrink-0 px-1">
+                      <input 
+                        type="text" 
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search songs, artists..." 
+                        className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-11 pr-4 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-green-500/50 transition-all"
+                      />
+                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-400" />
+                      <button type="submit" className="hidden">Search</button>
+                    </form>
+                    
+                    {isSearching && <div className="text-center text-zinc-400 py-8 animate-pulse">Searching catalog...</div>}
+                    {searchError && <div className="text-center text-red-400 py-8 text-sm">{searchError}</div>}
+                    
+                    <div className="space-y-1 overflow-y-auto flex-1">
+                      {!isSearching && searchResults.length === 0 && searchQuery && !searchError && (
+                        <div className="text-center text-zinc-500 py-8">No previewable tracks found</div>
+                      )}
+                      {searchResults.map((track, i) => {
+                        const active = track.url === activeTrack.url;
+                        return (
+                          <TrackItem key={track.id} track={track} active={active} isPlaying={isPlaying} index={i+1} onSelect={() => handleSelectTrack(track)} isSearch />
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* CHAT TAB */}
+                {activeTab === 'chat' && (
+                  <div className="flex flex-col h-full">
+                    <div className="flex-1 overflow-y-auto px-2 space-y-4 pb-4">
+                      {messages.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center text-zinc-500 text-sm gap-2">
+                          <MessageCircle className="w-8 h-8 opacity-20" />
+                          <p>Start chatting with your room!</p>
+                        </div>
+                      ) : (
+                        messages.map((msg) => {
+                          const isMe = msg.senderId === socket?.id;
+                          return (
+                            <motion.div 
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              key={msg.id} 
+                              className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
+                            >
+                              <span className="text-[10px] text-zinc-500 mb-1 px-1">{isMe ? "You" : msg.senderName}</span>
+                              <div className={`px-4 py-2 rounded-2xl max-w-[85%] text-sm ${isMe ? 'bg-blue-600 text-white rounded-tr-sm' : 'bg-white/10 text-zinc-200 rounded-tl-sm'}`}>
+                                {msg.text}
+                              </div>
+                            </motion.div>
+                          )
+                        })
+                      )}
+                      <div ref={chatEndRef} />
+                    </div>
+                    
+                    <form onSubmit={handleSendMessage} className="shrink-0 mt-2 px-1 relative">
+                      <input
+                        type="text"
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        placeholder="Say something nice..."
+                        className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                      />
+                      <button 
+                        type="submit" 
+                        disabled={!chatInput.trim()}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-blue-400 hover:bg-blue-500/20 rounded-lg transition-all disabled:opacity-50 disabled:hover:bg-transparent"
+                      >
+                        <Send className="w-5 h-5" />
+                      </button>
+                    </form>
+                  </div>
+                )}
+
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+
+      <audio
+        ref={audioRef}
+        src={audioUrl || PLAYLIST[0].url}
+        crossOrigin="anonymous"
+        onTimeUpdate={onTimeUpdate}
+        onLoadedMetadata={() => setDuration(audioRef.current?.duration || 0)}
+        onEnded={handleSkipNext}
+      />
+    </div>
+  );
+};
+
+// Helper Component for Playlist/Search items
+function TrackItem({ track, active, isPlaying, index, onSelect, isSearch = false }: any) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onSelect}
+      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left cursor-pointer transition-all ${active ? "bg-white/10 border border-white/15 shadow-lg" : "hover:bg-white/5 border border-transparent"}`}
+    >
+      {isSearch && track.albumArt ? (
+        <img src={track.albumArt} className="w-10 h-10 rounded-lg object-cover shadow-md" />
+      ) : (
+        <div className="w-10 h-10 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-inner"
+          style={{ background: `${track.color}33`, color: track.color }}
+        >
+          {active && isPlaying ? <span className="animate-pulse text-base">♪</span> : index}
+        </div>
+      )}
+      
+      <div className="flex-1 min-w-0 pl-1">
+        <p className={`text-sm font-semibold truncate ${active ? "text-white" : "text-zinc-300"}`}>{track.title}</p>
+        <p className="text-zinc-500 text-xs truncate mt-0.5">{track.artist}</p>
+      </div>
+      {active && (
+        <div className="flex gap-1 items-end h-4 pr-1">
+          {[0, 1, 2].map(j => (
+            <div key={j} className="w-1.5 rounded-full"
+              style={{
+                height: isPlaying ? undefined : "4px",
+                background: track.color,
+                animation: isPlaying ? `idle-bar 0.6s ease-in-out ${j * 0.15}s infinite alternate` : "none",
+                minHeight: "4px",
+                maxHeight: "16px",
+              }}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
